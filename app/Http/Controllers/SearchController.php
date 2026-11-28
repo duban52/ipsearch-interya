@@ -61,7 +61,8 @@ class SearchController extends Controller
             'count' => $result['result_count'],
             'duration_ms' => $result['duration_ms'],
             'failures' => $result['failures'] ?? [],
-            'results' => $result['results'],
+            'partial_routers' => $result['partial_routers'] ?? [],
+            'results' => MacAddressResolverService::forResponse($result['results']),
         ]);
     }
 

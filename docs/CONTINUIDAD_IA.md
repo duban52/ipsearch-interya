@@ -37,7 +37,7 @@ php artisan db:seed        # crea admin@interya.com; imprime la contraseña UNA 
 #    Sin Laragon: php artisan serve --host=127.0.0.1 --port=8000
 
 # 4. Verificación
-php artisan test           # 97 pruebas / 346 aserciones
+php artisan test           # 100 pruebas / 361 aserciones
 
 # 5. Tareas programadas (estado de routers cada 10 min)
 php artisan schedule:work  # en desarrollo; en producción usar cron: schedule:run
@@ -139,7 +139,7 @@ Variables opcionales del seeder: `IPS_ADMIN_EMAIL`, `IPS_ADMIN_USERNAME`, `IPS_A
 
 ## 7. Estado de las pruebas (contrato de no regresión)
 
-`php artisan test` → **97 pruebas, 346 aserciones, todas OK**. Cubren:
+`php artisan test` → **100 pruebas, 361 aserciones, todas OK**. Cubren:
 
 | Archivo | Qué protege |
 |---|---|

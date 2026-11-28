@@ -37,7 +37,7 @@ class MacResolverController extends Controller
             'mac' => $result['mac_normalized'],
             'status' => $result['status'],
             'count' => $result['result_count'],
-            'results' => $result['results'],
+            'results' => MacAddressResolverService::forResponse($result['results']),
         ]);
     }
 

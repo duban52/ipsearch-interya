@@ -8,7 +8,6 @@ use App\Models\MacSearch;
 use App\Models\MacSearchResult;
 use App\Models\MikrotikRouter;
 use App\Models\User;
-use App\Services\Mikrotik\MikrotikException;
 use App\Services\Mikrotik\MikrotikRestClient;
 use Illuminate\Support\Facades\Log;
 
@@ -40,71 +39,52 @@ class MacAddressResolverService
         $results = [];
         $reachable = 0;
         $failures = [];
+        $partialRouters = [];
+
+        // Todos los routers a la vez: la espera es la del más lento.
+        $allSources = $routers->isEmpty() ? [] : $this->mikrotik->collectSourcesMany($routers, $normalized);
+        $duration = (int) round((microtime(true) - $started) * 1000);
 
         foreach ($routers as $router) {
-            $routerStart = microtime(true);
-            $routerResults = [];
+            $sources = $allSources[$router->id] ?? ['error' => 'unreachable', 'error_detail' => null];
 
-            try {
-                $sources = $this->mikrotik->collectSources($router);
-
-                if ($sources['error'] !== null) {
-                    $router->forceFill([
-                        'last_checked_at' => now(),
-                        'connectivity_status' => 'fail',
-                    ])->save();
-
-                    $failures[] = [
-                        'router' => $router->name,
-                        'error' => $sources['error'],
-                        'detail' => $sources['error_detail'] ?? null,
-                    ];
-
-                    Log::warning('Mikrotik source error', [
-                        'router' => $router->name,
-                        'router_id' => $router->id,
-                        'error' => $sources['error'],
-                    ]);
-
-                    continue;
-                }
-
-                $reachable++;
-                $router->forceFill([
-                    'last_checked_at' => now(),
-                    'last_success_at' => now(),
-                    'connectivity_status' => 'ok',
-                ])->save();
-
-                $routerResults = $this->searchInSources($sources, $normalized, $router);
-            } catch (MikrotikException $e) {
-                $failures[] = [
-                    'router' => $router->name,
-                    'error' => $e->errorType,
-                    'detail' => $e->detail,
-                ];
-
+            if ($sources['error'] !== null) {
                 $router->forceFill([
                     'last_checked_at' => now(),
                     'connectivity_status' => 'fail',
                 ])->save();
 
-                Log::warning('Mikrotik connection failed', [
+                $failures[] = [
+                    'router' => $router->name,
+                    'error' => $sources['error'],
+                    'detail' => $sources['error_detail'] ?? null,
+                ];
+
+                Log::warning('Mikrotik source error', [
                     'router' => $router->name,
                     'router_id' => $router->id,
-                    'type' => $e->errorType,
+                    'error' => $sources['error'],
                 ]);
+
+                continue;
             }
 
-            $latency = (int) round((microtime(true) - $routerStart) * 1000);
+            $reachable++;
+            $router->forceFill([
+                'last_checked_at' => now(),
+                'last_success_at' => now(),
+                'connectivity_status' => 'ok',
+            ])->save();
 
-            foreach ($routerResults as $r) {
-                $r['response_ms'] = $latency;
+            if (! empty($sources['partial'])) {
+                $partialRouters[] = $router->name;
+            }
+
+            foreach ($this->searchInSources($sources, $normalized, $router) as $r) {
+                $r['response_ms'] = $sources['latency_ms'] ?? $duration;
                 $results[] = $r;
             }
         }
-
-        $duration = (int) round((microtime(true) - $started) * 1000);
 
         $status = $this->classifyStatus($routers->count(), $reachable, count($results));
 
@@ -117,8 +97,21 @@ class MacAddressResolverService
             'status' => $status,
             'duration_ms' => $duration,
             'failures' => $failures,
+            'partial_routers' => $partialRouters,
             'results' => $results,
         ];
+    }
+
+    /**
+     * Resultados para la respuesta JSON: sin la fila cruda del router
+     * (se conserva en la base de datos, no hace falta en el navegador).
+     *
+     * @param  list<array<string,mixed>>  $results
+     * @return list<array<string,mixed>>
+     */
+    public static function forResponse(array $results): array
+    {
+        return array_map(fn (array $r) => \Illuminate\Support\Arr::except($r, ['raw']), $results);
     }
 
     /**
@@ -141,7 +134,7 @@ class MacAddressResolverService
             'ip_address' => $first['ip_address'] ?? null,
             'request_ip' => $requestIp,
             'user_agent' => substr((string) $userAgent, 0, 255),
-            'meta' => ['failures' => $resolved['failures']],
+            'meta' => ['failures' => $resolved['failures'], 'partial_routers' => $resolved['partial_routers'] ?? []],
         ]);
 
         foreach ($resolved['results'] as $r) {

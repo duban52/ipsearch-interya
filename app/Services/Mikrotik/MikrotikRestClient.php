@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Crypt;
 /**
  * Cliente para la API REST de RouterOS 7 (/rest/...).
  *
- * Usa curl_multi para consultar varios endpoints en paralelo, con timeouts
+ * Usa curl_multi para consultar todos los routers y endpoints en paralelo, con timeouts
  * individuales, verificación SSL configurable y sin seguir redirecciones
  * (evita SSRF vía redirection). Las credenciales se descifran en memoria y
  * nunca se registran en logs ni se devuelven en respuestas.
@@ -86,26 +86,61 @@ class MikrotikRestClient
     /**
      * Consulta todos los mecanismos de asignación en un router.
      *
-     * Un endpoint no disponible (por ejemplo PPP sin configurar) NO invalida
-     * la consulta: solo se marca error de router cuando no se obtuvo ningún
-     * dato de ningún endpoint.
-     *
-     * @return array{dhcp: array, ppp: array, arp: array, hotspot_binding: array, error: ?string, partial: bool}
+     * @return array{dhcp: array, ppp: array, arp: array, hotspot_binding: array, error: ?string, error_detail: ?string, partial: bool}
      */
-    public function collectSources(MikrotikRouter $router): array
+    public function collectSources(MikrotikRouter $router, ?string $mac = null): array
     {
-        $results = array_fill_keys(array_keys(self::SOURCES), []);
-        $failures = [];
-        $details = [];
+        return $this->collectSourcesMany([$router], $mac)[$router->id];
+    }
 
-        $multi = curl_multi_init();
+    /**
+     * Consulta los mecanismos de asignación de varios routers a la vez.
+     *
+     * Todas las peticiones (routers × endpoints) van en un único curl_multi:
+     * la búsqueda tarda lo que el router más lento, no la suma de todos.
+     * Con $mac (formato AA:BB:CC:DD:EE:FF) el filtro lo aplica el router y
+     * solo viajan las filas de esa MAC, no las tablas completas.
+     *
+     * Un endpoint no disponible (por ejemplo PPP sin configurar) NO invalida
+     * el router: solo es error cuando ningún endpoint respondió.
+     *
+     * @param  iterable<MikrotikRouter>  $routers
+     * @return array<int, array<string,mixed>> Indexado por id de router.
+     */
+    public function collectSourcesMany(iterable $routers, ?string $mac = null): array
+    {
+        $out = [];
+        $state = [];
         $handles = [];
+        $multi = curl_multi_init();
 
         try {
-            foreach (self::SOURCES as $key => $path) {
-                $handle = $this->makeHandle($router, 'GET', $path);
-                $handles[$key] = $handle;
-                curl_multi_add_handle($multi, $handle);
+            foreach ($routers as $router) {
+                $state[$router->id] = [
+                    'router' => $router,
+                    'results' => array_fill_keys(array_keys(self::SOURCES), []),
+                    'failures' => [],
+                    'details' => [],
+                    'answered' => 0,
+                    'latency_ms' => 0,
+                ];
+
+                try {
+                    foreach (self::SOURCES as $key => $path) {
+                        $handle = $this->makeHandle($router, 'GET', $path.$this->macFilter($key, $mac));
+                        $handles[spl_object_id($handle)] = [$handle, $router->id, $key];
+                        curl_multi_add_handle($multi, $handle);
+                    }
+                } catch (MikrotikException $e) {
+                    // Credenciales ilegibles: falla este router, los demás siguen.
+                    $out[$router->id] = $this->sourcesPayload(
+                        array_fill_keys(array_keys(self::SOURCES), []),
+                        $e->errorType,
+                        $e->getMessage(),
+                        false,
+                    );
+                    unset($state[$router->id]);
+                }
             }
 
             do {
@@ -123,83 +158,119 @@ class MikrotikRestClient
                 $transferResults[spl_object_id($info['handle'])] = (int) $info['result'];
             }
 
-            foreach ($handles as $key => $handle) {
+            foreach ($handles as $id => [$handle, $routerId, $key]) {
                 $code = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
-                $transferResult = $transferResults[spl_object_id($handle)] ?? CURLE_OK;
+                $transferResult = $transferResults[$id] ?? CURLE_OK;
                 $body = (string) curl_multi_getcontent($handle);
                 $curlError = curl_error($handle);
+                $elapsedMs = (int) round(curl_getinfo($handle, CURLINFO_TOTAL_TIME) * 1000);
+                $endpoint = (string) curl_getinfo($handle, CURLINFO_EFFECTIVE_URL); // sin credenciales
 
                 curl_multi_remove_handle($multi, $handle);
                 curl_close($handle);
-                unset($handles[$key]);
+                unset($handles[$id]);
+
+                if (! isset($state[$routerId])) {
+                    continue;
+                }
+
+                $state[$routerId]['latency_ms'] = max($state[$routerId]['latency_ms'], $elapsedMs);
 
                 if ($transferResult !== CURLE_OK) {
-                    $failures[$key] = $transferResult === CURLE_OPERATION_TIMEDOUT ? 'timeout' : 'unreachable';
-                    $details[$key] = trim($this->endpoint($router).self::SOURCES[$key].' → '.($curlError ?: 'sin respuesta'));
+                    $state[$routerId]['failures'][$key] = $transferResult === CURLE_OPERATION_TIMEDOUT ? 'timeout' : 'unreachable';
+                    $state[$routerId]['details'][$key] = trim($endpoint.' → '.($curlError ?: 'sin respuesta'));
 
                     continue;
                 }
 
                 if ($code === 401 || $code === 403) {
-                    $failures[$key] = 'auth';
-                    $details[$key] = $this->endpoint($router).self::SOURCES[$key]." → HTTP {$code}";
+                    $state[$routerId]['failures'][$key] = 'auth';
+                    $state[$routerId]['details'][$key] = "{$endpoint} → HTTP {$code}";
 
                     continue;
                 }
 
-                // 400/404: el menú no existe en este router (normal en equipos sin
-                // PPP/HS). No es un fallo de conectividad.
-                if ($code >= 400) {
-                    continue;
-                }
+                // El router respondió. 400/404 = el menú no existe en este equipo
+                // (normal sin PPP/HS): no es fallo de conectividad.
+                $state[$routerId]['answered']++;
 
-                $decoded = json_decode($body, true);
-                $results[$key] = is_array($decoded) ? $decoded : [];
+                if ($code < 400) {
+                    $decoded = json_decode($body, true);
+                    $state[$routerId]['results'][$key] = is_array($decoded) ? $decoded : [];
+                }
             }
         } finally {
-            foreach ($handles as $handle) {
+            foreach ($handles as [$handle]) {
                 curl_multi_remove_handle($multi, $handle);
                 curl_close($handle);
             }
             curl_multi_close($multi);
         }
 
-        $error = $this->classifyRouterError($failures, $results);
+        foreach ($state as $routerId => $s) {
+            $error = $this->classifyRouterError($s['failures'], $s['answered']);
 
+            $out[$routerId] = $this->sourcesPayload(
+                $s['results'],
+                $error,
+                $error === null ? null : (reset($s['details']) ?: null),
+                $error === null && $s['failures'] !== [],
+                $s['latency_ms'],
+            );
+        }
+
+        return $out;
+    }
+
+    /**
+     * Filtro REST de RouterOS (?campo=valor) para que el router devuelva solo
+     * las filas de la MAC buscada. RouterOS guarda las MAC en mayúsculas con ":".
+     */
+    private function macFilter(string $source, ?string $mac): string
+    {
+        if ($mac === null) {
+            return '';
+        }
+
+        return '?'.http_build_query([$source === 'ppp' ? 'caller-id' : 'mac-address' => $mac]);
+    }
+
+    /**
+     * @param  array<string,array>  $results
+     */
+    private function sourcesPayload(array $results, ?string $error, ?string $detail, bool $partial, int $latencyMs = 0): array
+    {
         return [
             'dhcp' => $results['dhcp'],
             'ppp' => $results['ppp'],
             'arp' => $results['arp'],
             'hotspot_binding' => $results['hotspot_binding'],
             'error' => $error,
-            'error_detail' => $error === null ? null : (reset($details) ?: null),
-            'partial' => $error === null && $failures !== [],
+            'error_detail' => $detail,
+            'partial' => $partial,
+            'latency_ms' => $latencyMs,
         ];
     }
 
     /**
+     * El router es accesible si al menos un endpoint respondió, aunque sea sin
+     * filas (con el filtro por MAC, "vacío" es lo normal).
+     *
      * @param  array<string,string>  $failures
-     * @param  array<string,array>  $results
      */
-    private function classifyRouterError(array $failures, array $results): ?string
+    private function classifyRouterError(array $failures, int $answered): ?string
     {
-        $hasData = count(array_filter($results, fn ($rows) => $rows !== [])) > 0;
-
-        if ($hasData || $failures === []) {
-            return null; // Accesible; sin datos es simplemente "no hay coincidencias".
+        if ($answered > 0 || $failures === []) {
+            return null;
         }
 
         if (in_array('auth', $failures, true)) {
             return 'auth';
         }
 
-        if (count($failures) === count(self::SOURCES)) {
-            return count(array_unique($failures)) === 1 && reset($failures) === 'timeout'
-                ? 'timeout'
-                : 'unreachable';
-        }
-
-        return null;
+        return count(array_unique($failures)) === 1 && reset($failures) === 'timeout'
+            ? 'timeout'
+            : 'unreachable';
     }
 
     /**

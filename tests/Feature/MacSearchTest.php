@@ -13,9 +13,12 @@ class MacSearchTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function fakeSources(array $overrides = []): array
+    /**
+     * Respuesta simulada de collectSourcesMany: las mismas fuentes para cada router.
+     */
+    private function fakeSources(array $overrides = []): \Closure
     {
-        return array_merge([
+        $sources = array_merge([
             'dhcp' => [],
             'ppp' => [],
             'arp' => [],
@@ -23,6 +26,41 @@ class MacSearchTest extends TestCase
             'error' => null,
             'partial' => false,
         ], $overrides);
+
+        return fn ($routers) => collect($routers)->mapWithKeys(fn ($r) => [$r->id => $sources])->all();
+    }
+
+    public function test_todos_los_routers_se_consultan_en_una_sola_llamada_filtrada_por_mac(): void
+    {
+        $centro = $this->router();
+        $norte = $this->router(['name' => 'Router Norte', 'host' => '10.10.20.1', 'priority' => 2]);
+
+        $this->mock(MikrotikRestClient::class)
+            ->shouldReceive('collectSourcesMany')
+            ->once()
+            ->withArgs(fn ($routers, $mac) => count($routers) === 2 && $mac === 'AA:BB:CC:DD:EE:FF')
+            ->andReturn([
+                $centro->id => ($this->fakeSources(['error' => 'timeout']))([$centro])[$centro->id],
+                $norte->id => ($this->fakeSources([
+                    'partial' => true,
+                    'dhcp' => [['address' => '10.30.0.7', 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'dynamic' => 'true', 'status' => 'bound', 'host-name' => 'cpe']],
+                ]))([$norte])[$norte->id],
+            ]);
+
+        $response = $this->actingAs(User::factory()->create())
+            ->postJson('/search', ['mac' => 'aa-bb-cc-dd-ee-ff']);
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'partial')
+            ->assertJsonPath('reachable', 1)
+            ->assertJsonPath('failures.0.router', 'Router Centro')
+            ->assertJsonPath('partial_routers', ['Router Norte'])
+            ->assertJsonPath('results.0.router_name', 'Router Norte')
+            ->assertJsonMissingPath('results.0.raw');
+
+        // La fila cruda no viaja al navegador, pero sí queda en la base de datos.
+        $this->assertNotNull(\App\Models\MacSearchResult::first()->raw);
+        $this->assertSame(['Router Norte'], MacSearch::first()->meta['partial_routers']);
     }
 
     private function router(array $attributes = []): MikrotikRouter
@@ -77,9 +115,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'dhcp' => [[
                     'address' => '100.64.10.25',
                     'mac-address' => 'AA:BB:CC:DD:EE:FF',
@@ -116,9 +154,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'ppp' => [['name' => 'cliente1', 'address' => '10.20.0.5', 'caller-id' => 'AA:BB:CC:DD:EE:FF']],
                 'arp' => [['address' => '10.20.0.5', 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'interface' => 'ether1', 'complete' => 'true']],
             ]));
@@ -146,9 +184,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'dhcp' => [[
                     'address' => '100.64.10.25',
                     'mac-address' => 'AA:BB:CC:DD:EE:FF',
@@ -176,9 +214,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 // ARP histórico (incompleto) en una IP y DHCP activo en otra.
                 'arp' => [['address' => '10.0.0.50', 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'complete' => 'false']],
                 'dhcp' => [[
@@ -204,9 +242,9 @@ class MacSearchTest extends TestCase
         $this->router(['name' => 'Router Hotspot']);
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'hotspot_binding' => [[
                     'mac-address' => 'AA:BB:CC:DD:EE:FF',
                     'address' => '192.168.88.50',
@@ -229,9 +267,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'arp' => [
                     ['address' => null, 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'complete' => 'false'],
                     ['address' => '10.0.0.9', 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'complete' => 'true'],
@@ -250,9 +288,9 @@ class MacSearchTest extends TestCase
         $this->router();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources(['error' => 'unreachable']));
+            ->andReturnUsing($this->fakeSources(['error' => 'unreachable']));
 
         $response = $this->actingAs(User::factory()->create())
             ->postJson('/search', ['mac' => 'AA:BB:CC:DD:EE:FF']);
@@ -274,9 +312,9 @@ class MacSearchTest extends TestCase
 
         // partial = true: PPP no configurado, pero DHCP respondió.
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')
+            ->shouldReceive('collectSourcesMany')
             ->once()
-            ->andReturn($this->fakeSources([
+            ->andReturnUsing($this->fakeSources([
                 'partial' => true,
                 'dhcp' => [['address' => '10.30.0.7', 'mac-address' => 'AA:BB:CC:DD:EE:FF', 'dynamic' => 'false', 'status' => 'bound']],
             ]));

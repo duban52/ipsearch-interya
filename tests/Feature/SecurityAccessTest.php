@@ -44,7 +44,7 @@ class SecurityAccessTest extends TestCase
     public function test_un_invitado_no_puede_ejecutar_la_busqueda_mac(): void
     {
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')->never();
+            ->shouldReceive('collectSourcesMany')->never();
 
         $this->post('/search', ['mac' => 'AA:BB:CC:DD:EE:FF'])
             ->assertRedirect(route('login'));
@@ -55,7 +55,7 @@ class SecurityAccessTest extends TestCase
     public function test_la_api_interna_rechaza_peticiones_sin_sesion(): void
     {
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')->never();
+            ->shouldReceive('collectSourcesMany')->never();
 
         $this->postJson('/api/v1/mac-search', ['mac' => 'AA:BB:CC:DD:EE:FF'])
             ->assertUnauthorized();
@@ -109,7 +109,7 @@ class SecurityAccessTest extends TestCase
         $user->forceFill(['is_active' => false, 'suspended_at' => now()])->save();
 
         $this->mock(MikrotikRestClient::class)
-            ->shouldReceive('collectSources')->never();
+            ->shouldReceive('collectSourcesMany')->never();
 
         $this->post('/search', ['mac' => 'AA:BB:CC:DD:EE:FF'])
             ->assertRedirect(route('login'));

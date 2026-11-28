@@ -168,6 +168,23 @@ function activeBadge(result) {
         : '<span class="badge bg-secondary">Histórico</span>';
 }
 
+// Aviso cuando la búsqueda no cubrió toda la red: routers caídos o routers
+// que respondieron solo en parte (algún endpoint sin respuesta).
+function coverageNotice(data) {
+    const failed = (data.failures || []).map(f => f.router);
+    const partial = data.partial_routers || [];
+    if (failed.length === 0 && partial.length === 0) return '';
+
+    const parts = [];
+    if (failed.length) parts.push(`sin respuesta: <strong>${failed.map(escapeHtml).join(', ')}</strong>`);
+    if (partial.length) parts.push(`respuesta incompleta: <strong>${partial.map(escapeHtml).join(', ')}</strong>`);
+
+    return `<div class="alert alert-warning d-flex gap-2 align-items-start small">
+        <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+        <div>Cobertura parcial — ${parts.join(' · ')}. El dispositivo podría estar en un router no consultado.</div>
+    </div>`;
+}
+
 function renderResults(data) {
     const statusLabel = {
         completed: 'Completa',
@@ -189,7 +206,7 @@ function renderResults(data) {
         const msg = data.status === 'no_routers'
             ? 'No hay routers activos configurados. Contacta al administrador.'
             : `No encontramos una dirección IP asociada a la MAC <strong class="font-monospace">${escapeHtml(data.mac)}</strong> en los routers disponibles.`;
-        container.innerHTML = `<div class="alert alert-info d-flex gap-2 align-items-start"><i class="bi bi-info-circle-fill mt-1"></i><div>${msg}</div></div>`;
+        container.innerHTML = coverageNotice(data) + `<div class="alert alert-info d-flex gap-2 align-items-start"><i class="bi bi-info-circle-fill mt-1"></i><div>${msg}</div></div>`;
         container.classList.remove('d-none');
         return;
     }
@@ -199,7 +216,7 @@ function renderResults(data) {
     const primary = data.results[0];
     const others = data.results.slice(1);
 
-    let html = `
+    let html = coverageNotice(data) + `
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>

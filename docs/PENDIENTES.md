@@ -92,9 +92,11 @@ gráficos: serie diaria, distribución por mecanismo y top de usuarios, consumie
 y muestran el resultado en un alert: versión, board, latencia y endpoint; en caso de fallo, el
 detalle de curl y una explicación accionable. Ya no se sale del panel.
 
-### P2-3 · Estado "parcial" visible en la interfaz
+### P2-3 · Estado "parcial" visible en la interfaz — ✅ hecho
 `collectSources` informa `partial` (algún endpoint no disponible) pero el resultado no lo
 expone al usuario. Mostrar un aviso "cobertura parcial" cuando aplique.
+**Hecho:** la respuesta incluye `partial_routers` (también en `mac_searches.meta`) y el buscador
+muestra un aviso con los routers caídos y los que respondieron a medias, incluso sin resultados.
 
 ### P2-4 · Registrar en auditoría los intentos bloqueados por rol
 Hoy `token`/rol se resuelven a 403 sin dejar rastro. Registrar `access_denied` con ruta,
@@ -109,7 +111,7 @@ El `.env` local tiene `APP_DEBUG=true` (correcto en local). Antes de publicar:
 `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL` real, `php artisan config:cache route:cache view:cache`,
 HTTPS forzado y `SESSION_SECURE_COOKIE=true`.
 
-### P2-7 · Inicializar Git
+### P2-7 · Inicializar Git — ✅ hecho
 El proyecto no tiene repositorio. Antes de seguir: `git init`, `.gitignore` ya existe, primer
 commit del estado actual y commits atómicos por cambio.
 

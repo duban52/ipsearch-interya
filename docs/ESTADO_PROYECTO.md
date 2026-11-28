@@ -30,7 +30,7 @@ iniciada y cuenta activa. Ver §6.
 | Build frontend | `package.json`/Vite/Tailwind existen pero **no se usan**: las vistas no incluyen `@vite`. No se requiere `npm run build` para desplegar |
 | Colas / sesiones / caché | `database` (tablas `jobs`, `sessions`, `cache` migradas) |
 | Correo | SMTP administrado desde el panel (tabla `mail_settings`, contraseña cifrada). `MailConfigurator` lo aplica al mailer en cada arranque; si no hay configuración activa se usa `MAIL_MAILER` del `.env` (local: `log`) |
-| Git | **El proyecto no tiene repositorio Git.** No hay historial que consultar |
+| Git | Repositorio inicializado (rama `master`) |
 
 > Nota: la salida de PHP incluye avisos `MIB search path: c:/usr/share/snmp/mibs`
 > (extensión `snmp` mal configurada en el php.ini local). Es ruido del entorno, no un
@@ -101,7 +101,10 @@ Mecanismos: `pppoe_active`, `dhcp_active`, `dhcp_static`, `arp_complete`, `hotsp
 ## 5. Integración MikroTik (estado real)
 
 - **Protocolo:** API REST de RouterOS 7 (`/rest/...`) sobre HTTP(S), autenticación básica.
-- **Endpoints consultados por búsqueda** (en paralelo con `curl_multi`):
+- **Endpoints consultados por búsqueda**: todos los routers × endpoints en un único `curl_multi`
+  (`MikrotikRestClient::collectSourcesMany`), así la búsqueda tarda lo que el router más lento.
+  Cada petición lleva el filtro REST `?mac-address=` (`?caller-id=` en PPP) para que el router
+  devuelva solo las filas de esa MAC y no la tabla completa:
   - `/rest/ip/dhcp-server/lease` → leases dinámicos y estáticos
   - `/rest/ppp/active` → PPPoE activo (MAC en `caller-id`)
   - `/rest/ip/arp` → tabla ARP (completa/incompleta)
@@ -150,7 +153,7 @@ Mecanismos: `pppoe_active`, `dhcp_active`, `dhcp_static`, `arp_complete`, `hotsp
 - Registro libre deshabilitado: las cuentas solo se crean por invitación.
 
 ### Evidencia (ejecutable)
-`php artisan test` → **97 pruebas / 346 aserciones, OK**, incluyendo:
+`php artisan test` → **100 pruebas / 361 aserciones, OK**, incluyendo:
 - invitado no accede a 8 rutas protegidas (redirección a login) y no ejecuta búsquedas;
 - la API interna responde 401 sin sesión;
 - usuario normal recibe 403 en todo el panel y no crea routers ni usuarios;
@@ -284,7 +287,6 @@ Ver `docs/PENDIENTES.md`.
 
 ## 10. Deuda técnica conocida
 
-- Sin repositorio Git: no hay historial ni posibilidad de revertir.
 - `welcome.blade.php` y `resources/js|css` son restos del esqueleto Laravel: no se usan.
 - `resources/views/auth/login.blade.php` replica estilos en lugar de extender un layout de auth
   compartido (duplicación de ~20 líneas de CSS en 4 vistas de auth).
