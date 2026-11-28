@@ -55,15 +55,7 @@
             padding: 2rem;
             border: 1px solid var(--border);
         }
-        .brand-mark {
-            width: 48px; height: 48px;
-            border-radius: 12px;
-            background: var(--accent);
-            color: var(--primary-dark);
-            display: flex; align-items: center; justify-content: center;
-            font-weight: 800; font-size: 1.25rem;
-            margin-bottom: 1.25rem;
-        }
+        .brand-mark { display: block; width: 56px; height: 56px; margin-bottom: 1.25rem; }
         .form-control, .form-select {
             border-color: var(--border);
             background: var(--card);
@@ -92,7 +84,7 @@
     </button>
 
     <div class="auth-card">
-        <div class="brand-mark">IS</div>
+        <img src="{{ asset('favicon.svg') }}" class="brand-mark" width="56" height="56" alt="IPSearch Interya">
         <h1 class="h4 fw-bold mb-1">IPSearch Interya</h1>
         <p class="muted mb-4">Sistema privado de resolución MAC &rarr; IP</p>
 

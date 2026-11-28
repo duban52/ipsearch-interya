@@ -34,16 +34,21 @@ class MailConfigurator
 
             if (filled($setting->password)) {
                 $password = Crypt::decryptString($setting->password);
+
+                // Google muestra la contraseña de aplicación en bloques
+                // ("abcd efgh ijkl mnop"); pegada con espacios, Gmail responde 535.
+                if (self::isGmail($setting->host)) {
+                    $password = preg_replace('/\s+/', '', $password);
+                }
             }
 
             config([
                 'mail.default' => 'smtp',
-                'mail.mailers.smtp.host' => $setting->host,
+                'mail.mailers.smtp.host' => trim($setting->host),
                 'mail.mailers.smtp.port' => (int) $setting->port,
-                'mail.mailers.smtp.username' => $setting->username,
+                'mail.mailers.smtp.username' => $setting->username ? trim($setting->username) : null,
                 'mail.mailers.smtp.password' => $password,
-                'mail.mailers.smtp.scheme' => $this->scheme($setting->encryption),
-                'mail.mailers.smtp.encryption' => $setting->encryption === 'none' ? null : $setting->encryption,
+                'mail.mailers.smtp.scheme' => self::scheme((int) $setting->port, $setting->encryption),
                 'mail.mailers.smtp.timeout' => 10,
                 'mail.from.address' => $setting->from_address,
                 'mail.from.name' => $setting->from_name,
@@ -57,11 +62,22 @@ class MailConfigurator
     }
 
     /**
-     * RouterOS/Proveedores: ssl implica conexión cifrada desde el inicio
-     * (smtps); tls usa STARTTLS sobre smtp; sin cifrado, smtp plano.
+     * 465 es TLS implícito (smtps) y 587/25 usan STARTTLS sobre smtp, elija lo
+     * que elija el formulario: "TLS + 465" o "SSL + 587" dejaban la conexión
+     * colgada hasta el timeout (el caso típico con Gmail). Para otros puertos
+     * manda el cifrado elegido.
      */
-    private function scheme(?string $encryption): string
+    public static function scheme(int $port, ?string $encryption): string
     {
-        return $encryption === 'ssl' ? 'smtps' : 'smtp';
+        return match (true) {
+            $port === 465 => 'smtps',
+            in_array($port, [25, 587], true) => 'smtp',
+            default => $encryption === 'ssl' ? 'smtps' : 'smtp',
+        };
+    }
+
+    public static function isGmail(?string $host): bool
+    {
+        return (bool) preg_match('/(^|\.)(gmail|googlemail)\.com$/i', trim((string) $host));
     }
 }

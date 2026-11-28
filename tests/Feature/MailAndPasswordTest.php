@@ -55,6 +55,34 @@ class MailAndPasswordTest extends TestCase
         $this->assertSame('smtps', config('mail.mailers.smtp.scheme'));
     }
 
+    public function test_el_puerto_manda_sobre_el_cifrado_elegido(): void
+    {
+        $this->assertSame('smtps', MailConfigurator::scheme(465, 'tls'));
+        $this->assertSame('smtp', MailConfigurator::scheme(587, 'ssl'));
+        $this->assertSame('smtp', MailConfigurator::scheme(587, 'tls'));
+        $this->assertSame('smtps', MailConfigurator::scheme(2465, 'ssl'));
+        $this->assertSame('smtp', MailConfigurator::scheme(2525, 'none'));
+    }
+
+    public function test_gmail_quita_los_espacios_de_la_contrasena_de_aplicacion(): void
+    {
+        MailSetting::create([
+            'host' => 'smtp.gmail.com ',
+            'port' => 587,
+            'username' => 'cuenta@gmail.com',
+            'password' => Crypt::encryptString('abcd efgh ijkl mnop'),
+            'encryption' => 'tls',
+            'from_address' => 'cuenta@gmail.com',
+            'from_name' => 'IPSearch Interya',
+            'is_active' => true,
+        ]);
+
+        app(MailConfigurator::class)->apply();
+
+        $this->assertSame('abcdefghijklmnop', config('mail.mailers.smtp.password'));
+        $this->assertSame('smtp.gmail.com', config('mail.mailers.smtp.host'));
+    }
+
     public function test_sin_configuracion_activa_se_respeta_el_env(): void
     {
         $default = config('mail.default');

@@ -13,7 +13,7 @@
         [data-bs-theme="dark"] { --primary:#0071BC; --primary-dark:#083A56; --accent:#FCEE21; --bg:#0B1C2C; --card: #152A3F; --text:#E6EDF3; --muted: #A9BFD2; --border: #2E4A64; }
         body { font-family:'Inter',sans-serif; background:linear-gradient(135deg,var(--primary-dark),#0a4d6e 40%,var(--primary)); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1rem; }
         .auth-card { background:var(--card); border-radius:1rem; box-shadow:0 20px 60px rgba(8,58,86,.35); width:100%; max-width:420px; padding:2rem; border:1px solid var(--border); }
-        .brand-mark { width:48px; height:48px; border-radius:12px; background:var(--accent); color:var(--primary-dark); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:1.25rem; margin-bottom:1.25rem; }
+        .brand-mark { display: block; width: 56px; height: 56px; margin-bottom: 1.25rem; }
         .form-control { border-color:var(--border); background:var(--card); color:var(--text); padding:.65rem .85rem; }
         .form-control:focus { border-color:var(--primary); box-shadow:0 0 0 .2rem rgba(0,113,188,.18); background:var(--card); color:var(--text); }
         .btn-primary { background:var(--primary); border-color:var(--primary); font-weight:600; }
@@ -28,7 +28,7 @@
 </head>
 <body>
 <div class="auth-card">
-    <div class="brand-mark">IS</div>
+    <img src="{{ asset('favicon.svg') }}" class="brand-mark" width="56" height="56" alt="IPSearch Interya">
     <h1 class="h4 fw-bold mb-1">Nueva contraseña</h1>
     <p class="muted mb-4">Ingresa una contraseña robusta.</p>
 
